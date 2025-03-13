@@ -1,0 +1,35 @@
+# Build artifacts
+*.obj
+*.exe
+*.dll
+*.lib
+*.pdb
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.swp
+
+# Visual Studio files
+.vscode/
+.vs/
+*.vcxproj.user
+*.vcxproj.filters
+*.suo
+*.user
+*.ipch
+*.opensdf
+*.sdf
+
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Other
+.DS_Store
+Thumbs.db
+
+PurosesuRancha/
