@@ -129,10 +129,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Source.cpp" />
+    <ClInclude Include="HandleGuard.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="HandleGuard.hpp" />
+    <ClCompile Include="ProcessLauncher.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
