@@ -7,7 +7,6 @@
 #include <filesystem>
 #include <windows.h>
 
-
 // Process-related functions
 namespace ProcessUtils {
     HANDLE CreateSuspendedProcessW(std::string_view lpApplicationName, std::string_view lpCommandLine, 
