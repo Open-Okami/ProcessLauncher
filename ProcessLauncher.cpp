@@ -176,6 +176,7 @@ struct ConfigData {
     std::string applicationName;
     std::string commandLine;
     std::vector<std::string> dllPaths;
+    bool attachDebugger = false;
 };
 
 void CreateDefaultConfig(const std::string& configPath) {
@@ -191,11 +192,13 @@ void CreateDefaultConfig(const std::string& configPath) {
     configFile << "; ------ Configuration Options ------" << std::endl;
     configFile << "; ApplicationName: Path to the target application" << std::endl;
     configFile << "; CommandLine: Command line arguments for the target application" << std::endl;
+    configFile << "; AttachDebugger: Set to true to show a message box so you can attach a debugger" << std::endl;
     configFile << "; DLLPath: Path to the DLL to inject. Add more lines for multiple DLLs" << std::endl;
     configFile << "; -----------------------------------" << std::endl;
     configFile << std::endl;
     configFile << "ApplicationName: C:\\Program Files (x86)\\Steam\\steamapps\\common\\Okami\\okami.exe.unpacked.exe" << std::endl;
     configFile << "CommandLine: " << std::endl;
+    configFile << "AttachDebugger: false" << std::endl;
     configFile << "; DLLPath: C:\\Example\\DLL.dll" << std::endl;
     configFile << "; DLLPath: C:\\Example\\DLL2.dll" << std::endl;
     
@@ -248,9 +251,13 @@ void LoadConfig(const std::string& configPath, ConfigData* configData) {
             } else {
                 std::cout << "[ERROR] Invalid DLL path: " << value << std::endl;
             }
+        } else if (key == "AttachDebugger") {
+            configData->attachDebugger = value == "true";
+        } else {
+            std::cout << "[ERROR] Unknown key: " << key << std::endl;
         }
     }
-
+    
     configFile.close();
 }
 
@@ -258,6 +265,7 @@ void PrintConfig(const ConfigData& configData) {
     std::cout << "[DEBUG] Configuration data:" << std::endl;
     std::cout << "ApplicationName: " << configData.applicationName << std::endl;
     std::cout << "CommandLine: " << configData.commandLine << std::endl;
+    std::cout << "AttachDebugger: " << (configData.attachDebugger ? "true" : "false") << std::endl;
     std::cout << "DLLPaths:" << std::endl;
     for (const auto& dllPath : configData.dllPaths) {
         std::cout << "  " << dllPath << std::endl;
@@ -308,9 +316,10 @@ int main() {
         return 1;
     }
         
-	// Attach debugger messagebox
-	MessageBoxW(NULL, L"Attach debugger now", L"Debug", MB_ICONINFORMATION);
-
+	// Attach debugger
+    if (configData.attachDebugger) {
+        MessageBoxW(NULL, L"Attach debugger now", L"Debugger", MB_ICONINFORMATION);
+    }
 
     // Resume process
     if (!ProcessUtils::ResumeProcess(processInfo.hThread)) {
