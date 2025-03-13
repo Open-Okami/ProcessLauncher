@@ -2,17 +2,38 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <windows.h>
+
 
 // Process-related functions
 namespace ProcessUtils {
-    HANDLE CreateSuspendedProcessW(LPCWSTR lpApplicationName, LPWSTR lpCommandLine, 
-                                 LPSTARTUPINFO lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation) {
+    HANDLE CreateSuspendedProcessW(std::string_view lpApplicationName, std::string_view lpCommandLine, 
+                                 LPSTARTUPINFOA lpStartupInfo, LPPROCESS_INFORMATION lpProcessInformation) {
         std::cout << "[DEBUG] Attempting to create suspended process: " << lpApplicationName << std::endl;
 
-        if (!CreateProcessW(lpApplicationName, lpCommandLine, NULL, NULL, FALSE, 
-                          CREATE_SUSPENDED, NULL, NULL, lpStartupInfo, lpProcessInformation)) {
-            std::cout << "[ERROR] Failed to create suspended process" << std::endl;
-            return NULL;
+		std::string workingDirectory = std::filesystem::path(lpApplicationName).parent_path().string();
+		std::cout << "[DEBUG] Working directory: " << workingDirectory << std::endl;
+
+        BOOL result = CreateProcessA(
+            lpApplicationName.data(),
+            (LPSTR)lpCommandLine.data(),
+            NULL,
+            NULL,
+            FALSE,
+            CREATE_SUSPENDED,
+            NULL,
+            workingDirectory.c_str(),
+            lpStartupInfo,
+            lpProcessInformation
+        );
+        
+        if (!result) {
+          std::cout << "[ERROR] Failed to create suspended process"
+                    << std::endl;
+          return NULL;
         }
 
         std::cout << "[DEBUG] Successfully created process with handle " 
@@ -53,46 +74,65 @@ namespace InjectionUtils {
         }
         std::cout << "[DEBUG] Successfully got kernel32.dll handle" << std::endl;
 
-        FARPROC pLoadLibraryW = GetProcAddress(hKernel32, "LoadLibraryW");
-        if (!pLoadLibraryW) {
-            std::cout << "[ERROR] Failed to get LoadLibraryW address" << std::endl;
+        FARPROC pLoadLibraryA = GetProcAddress(hKernel32, "LoadLibraryA");
+        if (!pLoadLibraryA) {
+            std::cout << "[ERROR] Failed to get LoadLibraryA address" << std::endl;
             return nullptr;
         }
-        std::cout << "[DEBUG] Successfully got LoadLibraryW address" << std::endl;
+        std::cout << "[DEBUG] Successfully got LoadLibraryA address" << std::endl;
         
-        return pLoadLibraryW;
+        return pLoadLibraryA;
     }
 
-    BOOL InjectDLL(HANDLE hProcess, LPCWSTR lpLibFileName, FARPROC pLoadLibraryW) {
+    BOOL InjectDLL(HANDLE hProcess, std::string_view lpLibFileName, FARPROC pLoadLibraryA) {
         std::cout << "[DEBUG] Attempting to inject DLL: " << lpLibFileName << std::endl;
+
+        SIZE_T memorySize = lpLibFileName.size() + 1;
 
         // Allocate memory for DLL path
         InjectionContext context;
-        context.pDllPath = VirtualAllocEx(hProcess, NULL, 
-                                        (wcslen(lpLibFileName) + 1) * sizeof(WCHAR), 
-                                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        if (!context.pDllPath) {
+        LPVOID allocatedMemoryPointer = VirtualAllocEx(hProcess,
+                                                       NULL,
+                                                       memorySize,
+                                                       MEM_COMMIT | MEM_RESERVE,
+                                                       PAGE_READWRITE);
+
+        auto deallocateMemory = [&context, hProcess]() {
+            if (context.pDllPath) {
+                VirtualFreeEx(hProcess, context.pDllPath, 0, MEM_RELEASE);
+                std::cout << "[DEBUG] Cleaned up allocated memory" << std::endl;
+            }
+        };
+
+        if (!allocatedMemoryPointer) {
             std::cout << "[ERROR] Failed to allocate memory in remote process" << std::endl;
             return FALSE;
         }
+
         std::cout << "[DEBUG] Successfully allocated memory at " << context.pDllPath << std::endl;
+        context.pDllPath = allocatedMemoryPointer;
+                
+        BOOL writeProcessMemoryResult = WriteProcessMemory(hProcess,
+                                                            context.pDllPath,
+                                                            lpLibFileName.data(),
+                                                            lpLibFileName.size() + 1,
+                                                            NULL);
 
         // Write DLL path
-        if (!WriteProcessMemory(hProcess, context.pDllPath, lpLibFileName, 
-                              (wcslen(lpLibFileName) + 1) * sizeof(WCHAR), NULL)) {
+        if (!writeProcessMemoryResult) {
             std::cout << "[ERROR] Failed to write DLL path to remote process" << std::endl;
-            VirtualFreeEx(hProcess, context.pDllPath, 0, MEM_RELEASE);
+            deallocateMemory();
             return FALSE;
         }
         std::cout << "[DEBUG] Successfully wrote DLL path to remote process" << std::endl;
 
         // Create remote thread
         context.hThread = CreateRemoteThread(hProcess, NULL, 0, 
-                                           (LPTHREAD_START_ROUTINE)pLoadLibraryW, 
+                                           (LPTHREAD_START_ROUTINE)pLoadLibraryA, 
                                            context.pDllPath, 0, NULL);
         if (!context.hThread) {
             std::cout << "[ERROR] Failed to create remote thread" << std::endl;
-            VirtualFreeEx(hProcess, context.pDllPath, 0, MEM_RELEASE);
+            deallocateMemory();
             return FALSE;
         }
         std::cout << "[DEBUG] Successfully created remote thread with handle " 
@@ -109,21 +149,20 @@ namespace InjectionUtils {
         std::cout << "[DEBUG] Remote thread completed with exit code " << dwExitCode << std::endl;
 
         // Clean up
-        VirtualFreeEx(hProcess, context.pDllPath, 0, MEM_RELEASE);
-        std::cout << "[DEBUG] Cleaned up allocated memory" << std::endl;
+        deallocateMemory();
         
         return TRUE;
     }
 
-    bool InjectMultipleDLLs(HANDLE hProcess, const std::vector<std::wstring>& dllPaths) {
-        FARPROC pLoadLibraryW = GetLoadLibraryAddress();
-        if (!pLoadLibraryW) {
+    bool InjectMultipleDLLs(HANDLE hProcess, const std::vector<std::string>& dllPaths) {
+        FARPROC pLoadLibraryA = GetLoadLibraryAddress();
+        if (!pLoadLibraryA) {
             return false;
         }
 
         bool allSuccessful = true;
         for (const auto& dllPath : dllPaths) {
-            if (!InjectDLL(hProcess, dllPath.c_str(), pLoadLibraryW)) {
+            if (!InjectDLL(hProcess, dllPath, pLoadLibraryA)) {
                 std::cout << "[ERROR] Failed to inject DLL: " << dllPath.c_str() << std::endl;
                 allSuccessful = false;
             } else {
@@ -134,23 +173,124 @@ namespace InjectionUtils {
     }
 }
 
+struct ConfigData {
+    std::string applicationName;
+    std::string commandLine;
+    std::vector<std::string> dllPaths;
+};
+
+void CreateDefaultConfig(const std::string& configPath) {
+    std::cout << "[DEBUG] Creating default configuration file: " << configPath << std::endl;
+    
+    std::ofstream configFile(configPath);
+    if (!configFile.is_open()) {
+        std::cout << "[ERROR] Failed to create configuration file" << std::endl;
+        return;
+    }
+
+    configFile << "; Configuration file for DLL injector" << std::endl;
+    configFile << "; ------ Configuration Options ------" << std::endl;
+    configFile << "; ApplicationName: Path to the target application" << std::endl;
+    configFile << "; CommandLine: Command line arguments for the target application" << std::endl;
+    configFile << "; DLLPath: Path to the DLL to inject. Add more lines for multiple DLLs" << std::endl;
+    configFile << "; -----------------------------------" << std::endl;
+    configFile << std::endl;
+    configFile << "ApplicationName: C:\\Program Files (x86)\\Steam\\steamapps\\common\\Okami\\okami.exe.unpacked.exe" << std::endl;
+    configFile << "CommandLine: " << std::endl;
+    configFile << "; DLLPath: C:\\Example\\DLL.dll" << std::endl;
+    configFile << "; DLLPath: C:\\Example\\DLL2.dll" << std::endl;
+    
+    configFile.close();
+}
+
+void LoadConfig(const std::string& configPath, ConfigData* configData) {
+    std::cout << "[DEBUG] Loading configuration file: " << configPath << std::endl;
+
+    std::ifstream configFile(configPath);
+    if (!configFile.is_open()) {
+        std::cout << "[ERROR] Failed to open configuration file" << std::endl;
+        CreateDefaultConfig(configPath);
+        return;
+    }
+
+    std::string line;
+    while (std::getline(configFile, line)) {
+        // Trim whitespace from the beginning and end of the line
+        line.erase(0, line.find_first_not_of(" \t\n\r"));
+        line.erase(line.find_last_not_of(" \t\n\r") + 1);
+
+        if (line.empty() || line[0] == ';') {
+            continue;
+        }
+
+        size_t delimiterPos = line.find(':');
+        if (delimiterPos == std::string::npos) {
+            continue;
+        }
+
+        std::string key = line.substr(0, delimiterPos);
+        std::string value = line.substr(delimiterPos + 1);
+
+        // Trim whitespace from the beginning and end of the key and value
+        key.erase(0, key.find_first_not_of(" \t\n\r"));
+        key.erase(key.find_last_not_of(" \t\n\r") + 1);
+        value.erase(0, value.find_first_not_of(" \t\n\r"));
+        value.erase(value.find_last_not_of(" \t\n\r") + 1);
+
+        if (key == "ApplicationName") {
+            configData->applicationName = std::string(value.begin(), value.end());
+        } else if (key == "CommandLine") {
+            configData->commandLine = std::string(value.begin(), value.end());
+        } else if (key == "DLLPath") {
+            std::filesystem::path dllPath(value);
+            if (dllPath.is_absolute()) {
+                std::cout << "[DEBUG] Adding DLL path: " << value << std::endl;
+                configData->dllPaths.push_back(std::string(value.begin(), value.end()));
+            } else {
+                std::cout << "[ERROR] Invalid DLL path: " << value << std::endl;
+            }
+        }
+    }
+
+    configFile.close();
+}
+
+void PrintConfig(const ConfigData& configData) {
+    std::cout << "[DEBUG] Configuration data:" << std::endl;
+    std::cout << "ApplicationName: " << configData.applicationName << std::endl;
+    std::cout << "CommandLine: " << configData.commandLine << std::endl;
+    std::cout << "DLLPaths:" << std::endl;
+    for (const auto& dllPath : configData.dllPaths) {
+        std::cout << "  " << dllPath << std::endl;
+    }
+}
+
 int main() {
     std::cout << "[DEBUG] Program starting" << std::endl;
 
-    // Process configuration
-    const LPCWSTR lpApplicationName = L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Okami\\okami.exe.unpacked.exe";
-    WCHAR lpCommandLine[] = L"";
-    
-    STARTUPINFO startupInfo{};
-    startupInfo.cb = sizeof(STARTUPINFO);
+    const std::string configPath = "config.txt";
+    ConfigData configData;
+
+    // Load configuration file
+    LoadConfig(configPath, &configData);
+
+    // Print configuration data
+    PrintConfig(configData);
+
+    STARTUPINFOA startupInfo{};
+    startupInfo.cb = sizeof(STARTUPINFOA);
     std::cout << "[DEBUG] Initialized startup info" << std::endl;
 
     PROCESS_INFORMATION processInfo{};
     std::cout << "[DEBUG] Initialized process info" << std::endl;
 
     // Create suspended process
-    HANDLE hProcess = ProcessUtils::CreateSuspendedProcessW(lpApplicationName, lpCommandLine, 
-                                                          &startupInfo, &processInfo);
+    HANDLE hProcess = ProcessUtils::CreateSuspendedProcessW(
+        configData.applicationName, 
+        configData.commandLine,
+        &startupInfo,
+        &processInfo);
+    
     if (!hProcess) {
         std::cout << "[ERROR] Process creation failed" << std::endl;
         MessageBoxW(NULL, L"Failed to create the target process", L"Error", MB_ICONERROR);
@@ -162,14 +302,8 @@ int main() {
     HandleGuard threadGuard(processInfo.hThread);
     std::cout << "[DEBUG] Created HandleGuards for process and thread" << std::endl;
 
-    // DLLs to inject
-    std::vector<std::wstring> dllPaths = {
-        L"C:\\WorkDir\\Okami\\perikiyoxd\\SuteiOpun\\x64\\Debug\\SuteiOpun.dll"
-        // Add more DLL paths as needed
-    };
-
     // Inject multiple DLLs
-    if (!InjectionUtils::InjectMultipleDLLs(hProcess, dllPaths)) {
+    if (!InjectionUtils::InjectMultipleDLLs(hProcess, configData.dllPaths)) {
         std::cout << "[ERROR] One or more DLL injections failed" << std::endl;
         MessageBoxW(NULL, L"Failed to inject one or more DLLs", L"Error", MB_ICONERROR);
         return 1;
