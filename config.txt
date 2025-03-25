@@ -1,0 +1,13 @@
+; Configuration file for DLL injector
+; ------ Configuration Options ------
+; ApplicationName: Path to the target application
+; CommandLine: Command line arguments for the target application
+; AttachDebugger: Set to true to show a message box so you can attach a debugger
+; DLLPath: Path to the DLL to inject. Add more lines for multiple DLLs
+; -----------------------------------
+
+ApplicationName: C:\Program Files (x86)\Steam\steamapps\common\Okami\okami.exe.unpacked.exe
+CommandLine: 
+AttachDebugger: false
+; DLLPath: C:\Example\DLL.dll
+; DLLPath: C:\Example\DLL2.dll

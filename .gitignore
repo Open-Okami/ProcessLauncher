@@ -33,3 +33,13 @@ Makefile
 Thumbs.db
 
 ProcessLauncher/
+
+build/
+x86/
+x64/
+Debug/
+Release/
+
+.xmake/
+xmake.lua
+compile_commands.json
